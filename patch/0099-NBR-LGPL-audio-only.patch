@@ -1,13 +1,14 @@
-From bfe93b80fddb19ad126497d51999f9e4d98c953c Mon Sep 17 00:00:00 2001
+From f83e225961747b9017f47595583f3f1a7b3cd7b7 Mon Sep 17 00:00:00 2001
 From: Gordan <gordan.radic@gmail.com>
-Date: Sat, 1 Aug 2026 00:57:37 +0200
+Date: Sat, 1 Aug 2026 01:27:38 +0200
 Subject: [PATCH] NBR: LGPL, audio only
 
 ---
- cmake/packages_check.cmake |  8 ++----
- packages/ffmpeg.cmake      | 53 ++++++--------------------------------
- packages/mpv.cmake         | 51 +++++++++++++++++-------------------
- 3 files changed, 33 insertions(+), 79 deletions(-)
+ cmake/packages_check.cmake     |  8 ++---
+ packages/ffmpeg.cmake          | 53 +++++-----------------------------
+ packages/mpv.cmake             | 51 +++++++++++++++-----------------
+ packages/nvcodec-headers.cmake |  2 +-
+ 4 files changed, 34 insertions(+), 80 deletions(-)
 
 diff --git a/cmake/packages_check.cmake b/cmake/packages_check.cmake
 index e062242..998624f 100644
@@ -208,6 +209,17 @@ index a2954d5..84220ec 100644
 -cleanup(mpv copy-package-dir)
 +cleanup(mpv copy-package-dir)
 \ No newline at end of file
+diff --git a/packages/nvcodec-headers.cmake b/packages/nvcodec-headers.cmake
+index 77fa098..f619e67 100644
+--- a/packages/nvcodec-headers.cmake
++++ b/packages/nvcodec-headers.cmake
+@@ -1,5 +1,5 @@
+ ExternalProject_Add(nvcodec-headers
+-    GIT_REPOSITORY https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
++    GIT_REPOSITORY https://github.com/FFmpeg/nv-codec-headers.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--filter=tree:0"
+     UPDATE_COMMAND ""
 -- 
 2.55.0.windows.2
 
