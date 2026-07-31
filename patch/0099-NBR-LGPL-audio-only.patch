@@ -1,0 +1,223 @@
+From ce77c579ee63b8fbaad579754d32c528c73fcd6a Mon Sep 17 00:00:00 2001
+From: Gordan <gordan.radic@gmail.com>
+Date: Fri, 31 Jul 2026 12:12:46 +0200
+Subject: [PATCH] NBR: LGPL, audio only
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Drops every GPL component and every video, image and GPU path, and drops
+--enable-version3 so FFmpeg comes out LGPL 2.1 rather than 3 — nothing here
+needs it, AMR is decoded by FFmpeg's own amrnb/amrwb.
+
+Keeps EVERY audio decoder and EVERY audio filter FFmpeg has, not only the ones
+the caller uses today: 214 decoders and 154 filters, both derived from FFmpeg's
+own classification (codec_desc.c AVMEDIA_TYPE for decoders, the af_/asrc_/asink_
+prefixes in allfilters.c for filters). A hand-picked list would silently drop the
+codec some reader's book needs.
+
+libass and libplacebo are left alone: mpv's meson.build declares both with no
+required: argument and no feature option, so neither can be disabled.
+libplacebo at least loses every GPU backend.
+
+DEPENDS is left alone too. It decides what the CI builds, not what gets linked —
+an unused static library costs build minutes, not bytes.
+---
+ cmake/packages_check.cmake |  8 ++----
+ packages/ffmpeg.cmake      | 50 ++++++-------------------------------
+ packages/mpv.cmake         | 51 +++++++++++++++++---------------------
+ 3 files changed, 33 insertions(+), 76 deletions(-)
+
+diff --git a/cmake/packages_check.cmake b/cmake/packages_check.cmake
+index e062242..998624f 100644
+--- a/cmake/packages_check.cmake
++++ b/cmake/packages_check.cmake
+@@ -7,11 +7,7 @@ if(COMPILER_TOOLCHAIN STREQUAL "gcc")
+     set(ffmpeg_extra_libs "-lstdc++")
+     set(libjxl_unaligned_vector "-Wa,-muse-unaligned-vector-move") # fix crash on AVX2 proc (64bit) due to unaligned stack memory
+     set(mpv_copy_debug COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.debug ${CMAKE_CURRENT_BINARY_DIR}/mpv-debug/mpv.debug)
+-    set(mpv_add_debuglink COMMAND ${EXEC} ${TARGET_ARCH}-objcopy --only-keep-debug <BINARY_DIR>/mpv.exe <BINARY_DIR>/mpv.debug
+-                          COMMAND ${EXEC} ${TARGET_ARCH}-strip -s <BINARY_DIR>/mpv.exe
+-                          COMMAND ${EXEC} ${TARGET_ARCH}-objcopy --add-gnu-debuglink=<BINARY_DIR>/mpv.debug <BINARY_DIR>/mpv.exe
+-                          COMMAND ${EXEC} ${TARGET_ARCH}-strip -s <BINARY_DIR>/mpv.com
+-                          COMMAND ${EXEC} ${TARGET_ARCH}-strip -s <BINARY_DIR>/libmpv-2.dll)
++    set(mpv_add_debuglink COMMAND ${EXEC} ${TARGET_ARCH}-strip -s <BINARY_DIR>/libmpv-2.dll)
+ elseif(COMPILER_TOOLCHAIN STREQUAL "clang")
+     set(rust_target "gnullvm")
+     set(vapoursynth_pkgconfig_libs "-lVapourSynth -Wl,-delayload=VapourSynth.dll")
+@@ -64,4 +60,4 @@ elseif(TARGET_CPU STREQUAL "aarch64")
+     set(openssl_ec_opt "enable-ec_nistp_64_gcc_128")
+     set(libvpx_target "arm64-win64-gcc")
+     set(mpv_gl "-Dgl=disabled -Degl-angle=disabled")
+-endif()
++endif()
+\ No newline at end of file
+diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
+index b9ab7a3..0ed0e2e 100644
+--- a/packages/ffmpeg.cmake
++++ b/packages/ffmpeg.cmake
+@@ -57,62 +57,28 @@ ExternalProject_Add(ffmpeg
+         --pkg-config-flags=--static
+         --enable-cross-compile
+         --enable-runtime-cpudetect
+-        --enable-gpl
+-        --enable-version3
+-        --enable-avisynth
+-        --enable-vapoursynth
+-        --enable-libass
+-        --enable-libbluray
+-        --enable-libdvdnav
+-        --enable-libdvdread
+-        --enable-libfreetype
+-        --enable-libfribidi
+-        --enable-libfontconfig
+-        --enable-libharfbuzz
++        --disable-everything
++        --enable-demuxers
++        --enable-parsers
++        --enable-protocols
++        --enable-bsfs
++        --enable-decoder=aac,aac_fixed,aac_latm,ac3,ac3_fixed,acelp_kelvin,adpcm_4xm,adpcm_adx,adpcm_afc,adpcm_agm,adpcm_aica,adpcm_argo,adpcm_ct,adpcm_dtk,adpcm_ea,adpcm_ea_maxis_xa,adpcm_ea_r1,adpcm_ea_r2,adpcm_ea_r3,adpcm_ea_xas,adpcm_g722,adpcm_g726,adpcm_g726le,adpcm_ima_acorn,adpcm_ima_alp,adpcm_ima_amv,adpcm_ima_apc,adpcm_ima_apm,adpcm_ima_cunning,adpcm_ima_dat4,adpcm_ima_dk3,adpcm_ima_dk4,adpcm_ima_ea_eacs,adpcm_ima_ea_sead,adpcm_ima_iss,adpcm_ima_moflex,adpcm_ima_mtf,adpcm_ima_oki,adpcm_ima_qt,adpcm_ima_rad,adpcm_ima_smjpeg,adpcm_ima_ssi,adpcm_ima_wav,adpcm_ima_ws,adpcm_ima_xbox,adpcm_ms,adpcm_mtaf,adpcm_psx,adpcm_sanyo,adpcm_sbpro_2,adpcm_sbpro_3,adpcm_sbpro_4,adpcm_swf,adpcm_thp,adpcm_thp_le,adpcm_vima,adpcm_xa,adpcm_xmd,adpcm_yamaha,adpcm_zork,alac,als,amrnb,amrwb,anull,apac,ape,aptx,aptx_hd,atrac1,atrac3,atrac3al,atrac3p,atrac3pal,atrac9,binkaudio_dct,binkaudio_rdft,bmv_audio,bonk,cbd2_dpcm,comfortnoise,cook,dca,derf_dpcm,dfpwm,dolby_e,dsd_lsbf,dsd_lsbf_planar,dsd_msbf,dsd_msbf_planar,dsicinaudio,dss_sp,dst,dvaudio,eac3,eightsvx_exp,eightsvx_fib,evrc,fastaudio,ffwavesynth,flac,ftr,g723_1,g728,g729,gremlin_dpcm,gsm,gsm_ms,hca,hcom,iac,ilbc,imc,interplay_acm,interplay_dpcm,libopus,libspeex,libvorbis,mace3,mace6,metasound,misc4,mlp,mp1,mp1float,mp2,mp2float,mp3,mp3adu,mp3adufloat,mp3float,mp3on4,mp3on4float,mpc7,mpc8,msnsiren,nellymoser,on2avc,opus,osq,paf_audio,pcm_alaw,pcm_bluray,pcm_dvd,pcm_dvda,pcm_f16le,pcm_f24le,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_lxf,pcm_mulaw,pcm_s16be,pcm_s16be_planar,pcm_s16le,pcm_s16le_planar,pcm_s24be,pcm_s24daud,pcm_s24le,pcm_s24le_planar,pcm_s32be,pcm_s32le,pcm_s32le_planar,pcm_s64be,pcm_s64le,pcm_s8,pcm_s8_planar,pcm_sga,pcm_u16be,pcm_u16le,pcm_u24be,pcm_u24le,pcm_u32be,pcm_u32le,pcm_u8,pcm_vidc,qcelp,qdm2,qdmc,qoa,ra_144,ra_288,ralf,rka,roq_dpcm,s302m,sbc,sdx2_dpcm,shorten,sipr,siren,smackaud,sol_dpcm,speex,tak,truehd,truespeech,tta,twinvq,vmdaudio,vorbis,wady_dpcm,wavarc,wavpack,wmalossless,wmapro,wmav1,wmav2,wmavoice,ws_snd1,xan_dpcm,xma1,xma2
++        --enable-filter=aap,abench,abuffer,acompressor,acontrast,acopy,acrossfade,acrossover,acrusher,acue,adeclick,adeclip,adecorrelate,adelay,adenorm,aderivative,adrc,adynamicequalizer,adynamicsmooth,aecho,aemphasis,aeval,aevalsrc,aexciter,afade,afdelaysrc,afftdn,afftfilt,afir,afireqsrc,afirsrc,aformat,afreqshift,afwtdn,agate,aiir,aintegral,ainterleave,alatency,alimiter,allpass,aloop,amerge,ametadata,amix,amultiply,anequalizer,anlmdn,anlmf,anlms,anoisesrc,anull,anullsink,anullsrc,apad,aperms,aphaser,aphaseshift,apsnr,apsyclip,apulsator,arealtime,aresample,areverse,arls,arnndn,asdr,asegment,aselect,asendcmd,asetnsamples,asetpts,asetrate,asettb,ashowinfo,asidedata,asisdr,asoftclip,aspectralstats,asplit,asr,astats,astreamselect,asubboost,asubcut,asupercut,asuperpass,asuperstop,atempo,atilt,atrim,axcorrelate,azmq,bandpass,bandreject,bass,biquad,bs2b,channelmap,channelsplit,chorus,compand,compensationdelay,crossfeed,crystalizer,dcshift,deesser,dialoguenhance,drmeter,dynaudnorm,earwax,ebur128,equalizer,extrastereo,firequalizer,flanger,flite,haas,hdcd,headphone,highpass,highshelf,hilbert,join,ladspa,loudnorm,lowpass,lowshelf,lv2,mcompand,pan,replaygain,rubberband,sidechaincompress,sidechaingate,silencedetect,silenceremove,sinc,sine,sofalizer,speechnorm,stereotools,stereowiden,superequalizer,surround,tiltshelf,treble,tremolo,vibrato,virtualbass,volume,volumedetect,whisper
+         --enable-libmodplug
+         --enable-libopenmpt
+-        --enable-libmp3lame
+-        --enable-lcms2
+         --enable-libopus
+         --enable-libsoxr
+         --enable-libspeex
+         --enable-libvorbis
+         --enable-libbs2b
+-        --enable-librubberband
+-        --enable-libvpx
+-        --enable-libwebp
+-        --enable-libx264
+-        --enable-libx265
+-        --enable-libaom
+-        --enable-libsvtav1
+-        --enable-libdav1d
+-        ${ffmpeg_davs2_cmd}
+-        ${ffmpeg_uavs3d_cmd}
+-        --enable-libzimg
+         --enable-openssl
+         --enable-libxml2
+         --enable-libmysofa
+-        --enable-libssh
+-        --enable-libsrt
+-        --enable-libvpl
+-        --enable-libjxl
+-        --enable-libplacebo
+-        --enable-libzvbi
+-        --enable-libaribcaption
+-        --enable-cuda-llvm
+-        --enable-cuvid
+-        --enable-nvdec
+-        --enable-nvenc
+-        --enable-amf
+-        --enable-openal
+-        --enable-opengl
+         --disable-doc
+         --disable-ffplay
+         --disable-ffprobe
+-        --enable-vaapi
+         --disable-vdpau
+         --disable-videotoolbox
+-        --disable-decoder=libaom_av1
+         ${ffmpeg_lto}
+         --extra-cflags='-Wno-error=int-conversion'
+         "--extra-libs='${ffmpeg_extra_libs}'" # -lstdc++ / -lc++ needs by libjxl and shaderc
+@@ -122,4 +88,4 @@ ExternalProject_Add(ffmpeg
+ )
+ 
+ force_rebuild_git(ffmpeg)
+-cleanup(ffmpeg install)
++cleanup(ffmpeg install)
+\ No newline at end of file
+diff --git a/packages/mpv.cmake b/packages/mpv.cmake
+index a2954d5..84220ec 100644
+--- a/packages/mpv.cmake
++++ b/packages/mpv.cmake
+@@ -38,25 +38,31 @@ ExternalProject_Add(mpv
+         -Ddebug=true
+         -Db_ndebug=true
+         -Doptimization=3
++        -Dcplayer=false
++        -Dsdl2=disabled
++        -Dwasapi=enabled
++        -Dd3d11=disabled
++        -Dgpl=false
++        -Dgl=disabled
+         -Db_lto=true
+         ${mpv_lto_mode}
+         -Dlibmpv=true
+-        -Dpdf-build=enabled
+-        -Dlua=enabled
+-        -Djavascript=enabled
+-        -Dsdl2-gamepad=enabled
+-        -Dlibarchive=enabled
+-        -Dlibbluray=enabled
+-        -Ddvdnav=enabled
+-        -Duchardet=enabled
+-        -Drubberband=enabled
+-        -Dlcms2=enabled
+-        -Dopenal=enabled
+-        -Dspirv-cross=enabled
+-        -Dvulkan=enabled
+-        -Dvapoursynth=enabled
+-        -Dsubrandr=enabled
+-        -Dsixel=enabled
++        -Dpdf-build=disabled
++        -Dlua=disabled
++        -Djavascript=disabled
++        -Dsdl2-gamepad=disabled
++        -Dlibarchive=disabled
++        -Dlibbluray=disabled
++        -Ddvdnav=disabled
++        -Duchardet=disabled
++        -Drubberband=disabled
++        -Dlcms2=disabled
++        -Dopenal=disabled
++        -Dspirv-cross=disabled
++        -Dvulkan=disabled
++        -Dvapoursynth=disabled
++        -Dsubrandr=disabled
++        -Dsixel=disabled
+         ${mpv_gl}
+         -Dlibcurl=enabled
+         -Dc_args='-Wno-error=int-conversion'
+@@ -73,13 +79,6 @@ ExternalProject_Add_Step(mpv strip-binary
+ 
+ ExternalProject_Add_Step(mpv copy-binary
+     DEPENDEES strip-binary
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.exe                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv.exe
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.com                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv.com
+-    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/etc/mpv-register.bat              ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv-register.bat
+-    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/etc/mpv-unregister.bat            ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv-unregister.bat
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.pdf                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/doc/manual.pdf
+-    COMMAND ${CMAKE_COMMAND} -E copy ${MINGW_INSTALL_PREFIX}/etc/fonts/fonts.conf   ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv/fonts.conf
+-    ${mpv_copy_debug}
+     COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv-2.dll          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv-2.dll
+     COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv.dll.a          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv.dll.a
+     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/client.h       ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/client.h
+@@ -99,11 +98,7 @@ mv $2 $2-git-\${GIT}")
+ ExternalProject_Add_Step(mpv copy-package-dir
+     DEPENDEES copy-binary
+     COMMAND chmod 755 ${RENAME}
+-    COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-package ${CMAKE_BINARY_DIR}/mpv-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+ 
+-    COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-debug ${CMAKE_BINARY_DIR}/mpv-debug-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-debug-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+ 
+     COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+     COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+@@ -113,4 +108,4 @@ ExternalProject_Add_Step(mpv copy-package-dir
+ 
+ force_rebuild_git(mpv)
+ force_meson_configure(mpv)
+-cleanup(mpv copy-package-dir)
++cleanup(mpv copy-package-dir)
+\ No newline at end of file
+-- 
+2.55.0.windows.2
+
