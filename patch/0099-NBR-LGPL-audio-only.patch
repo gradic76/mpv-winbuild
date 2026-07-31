@@ -1,32 +1,13 @@
-From ce77c579ee63b8fbaad579754d32c528c73fcd6a Mon Sep 17 00:00:00 2001
+From bfe93b80fddb19ad126497d51999f9e4d98c953c Mon Sep 17 00:00:00 2001
 From: Gordan <gordan.radic@gmail.com>
-Date: Fri, 31 Jul 2026 12:12:46 +0200
+Date: Sat, 1 Aug 2026 00:57:37 +0200
 Subject: [PATCH] NBR: LGPL, audio only
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
-Drops every GPL component and every video, image and GPU path, and drops
---enable-version3 so FFmpeg comes out LGPL 2.1 rather than 3 — nothing here
-needs it, AMR is decoded by FFmpeg's own amrnb/amrwb.
-
-Keeps EVERY audio decoder and EVERY audio filter FFmpeg has, not only the ones
-the caller uses today: 214 decoders and 154 filters, both derived from FFmpeg's
-own classification (codec_desc.c AVMEDIA_TYPE for decoders, the af_/asrc_/asink_
-prefixes in allfilters.c for filters). A hand-picked list would silently drop the
-codec some reader's book needs.
-
-libass and libplacebo are left alone: mpv's meson.build declares both with no
-required: argument and no feature option, so neither can be disabled.
-libplacebo at least loses every GPU backend.
-
-DEPENDS is left alone too. It decides what the CI builds, not what gets linked —
-an unused static library costs build minutes, not bytes.
 ---
  cmake/packages_check.cmake |  8 ++----
- packages/ffmpeg.cmake      | 50 ++++++-------------------------------
- packages/mpv.cmake         | 51 +++++++++++++++++---------------------
- 3 files changed, 33 insertions(+), 76 deletions(-)
+ packages/ffmpeg.cmake      | 53 ++++++--------------------------------
+ packages/mpv.cmake         | 51 +++++++++++++++++-------------------
+ 3 files changed, 33 insertions(+), 79 deletions(-)
 
 diff --git a/cmake/packages_check.cmake b/cmake/packages_check.cmake
 index e062242..998624f 100644
@@ -53,10 +34,19 @@ index e062242..998624f 100644
 +endif()
 \ No newline at end of file
 diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
-index b9ab7a3..0ed0e2e 100644
+index b9ab7a3..e6d7c3b 100644
 --- a/packages/ffmpeg.cmake
 +++ b/packages/ffmpeg.cmake
-@@ -57,62 +57,28 @@ ExternalProject_Add(ffmpeg
+@@ -1,8 +1,5 @@
+ ExternalProject_Add(ffmpeg
+     DEPENDS
+-        amf-headers
+-        avisynth-headers
+-        nvcodec-headers
+         bzip2
+         lame
+         lcms2
+@@ -57,62 +54,28 @@ ExternalProject_Add(ffmpeg
          --pkg-config-flags=--static
          --enable-cross-compile
          --enable-runtime-cpudetect
@@ -126,7 +116,7 @@ index b9ab7a3..0ed0e2e 100644
          ${ffmpeg_lto}
          --extra-cflags='-Wno-error=int-conversion'
          "--extra-libs='${ffmpeg_extra_libs}'" # -lstdc++ / -lc++ needs by libjxl and shaderc
-@@ -122,4 +88,4 @@ ExternalProject_Add(ffmpeg
+@@ -122,4 +85,4 @@ ExternalProject_Add(ffmpeg
  )
  
  force_rebuild_git(ffmpeg)
