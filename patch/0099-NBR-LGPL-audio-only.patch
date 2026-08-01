@@ -1,17 +1,17 @@
-From f83e225961747b9017f47595583f3f1a7b3cd7b7 Mon Sep 17 00:00:00 2001
+From 4a7a95fd93fab30c4d891ec346d2a56d2d03dcec Mon Sep 17 00:00:00 2001
 From: Gordan <gordan.radic@gmail.com>
-Date: Sat, 1 Aug 2026 01:27:38 +0200
+Date: Sat, 1 Aug 2026 03:04:19 +0200
 Subject: [PATCH] NBR: LGPL, audio only
 
 ---
- cmake/packages_check.cmake     |  8 ++---
+ cmake/packages_check.cmake     | 12 +++-----
  packages/ffmpeg.cmake          | 53 +++++-----------------------------
- packages/mpv.cmake             | 51 +++++++++++++++-----------------
+ packages/mpv.cmake             | 50 ++++++++++++++------------------
  packages/nvcodec-headers.cmake |  2 +-
- 4 files changed, 34 insertions(+), 80 deletions(-)
+ 4 files changed, 35 insertions(+), 82 deletions(-)
 
 diff --git a/cmake/packages_check.cmake b/cmake/packages_check.cmake
-index e062242..998624f 100644
+index e062242..e07162f 100644
 --- a/cmake/packages_check.cmake
 +++ b/cmake/packages_check.cmake
 @@ -7,11 +7,7 @@ if(COMPILER_TOOLCHAIN STREQUAL "gcc")
@@ -27,6 +27,24 @@ index e062242..998624f 100644
  elseif(COMPILER_TOOLCHAIN STREQUAL "clang")
      set(rust_target "gnullvm")
      set(vapoursynth_pkgconfig_libs "-lVapourSynth -Wl,-delayload=VapourSynth.dll")
+@@ -37,7 +33,7 @@ if(TARGET_CPU STREQUAL "x86_64")
+     set(openssl_target "mingw64")
+     set(openssl_ec_opt "enable-ec_nistp_64_gcc_128")
+     set(libvpx_target "x86_64-win64-gcc")
+-    set(mpv_gl "-Dgl=enabled -Degl-angle=enabled")
++    set(mpv_gl "-Dgl=disabled -Degl-angle=disabled")
+     set(xxhash_dispatch "-DDISPATCH=ON")
+     set(xxhash_cflags "-DXXH_X86DISPATCH_ALLOW_AVX=1")
+     set(ffmpeg_uavs3d "uavs3d")
+@@ -49,7 +45,7 @@ elseif(TARGET_CPU STREQUAL "i686")
+     set(vulkan_asm "-DUSE_MASM=OFF")
+     set(openssl_target "mingw")
+     set(libvpx_target "x86-win32-gcc")
+-    set(mpv_gl "-Dgl=enabled -Degl-angle=enabled")
++    set(mpv_gl "-Dgl=disabled -Degl-angle=disabled")
+     set(xxhash_dispatch "-DDISPATCH=ON")
+     set(xxhash_cflags "-DXXH_X86DISPATCH_ALLOW_AVX=1")
+     set(ffmpeg_uavs3d "uavs3d")
 @@ -64,4 +60,4 @@ elseif(TARGET_CPU STREQUAL "aarch64")
      set(openssl_ec_opt "enable-ec_nistp_64_gcc_128")
      set(libvpx_target "arm64-win64-gcc")
@@ -125,19 +143,18 @@ index b9ab7a3..e6d7c3b 100644
 +cleanup(ffmpeg install)
 \ No newline at end of file
 diff --git a/packages/mpv.cmake b/packages/mpv.cmake
-index a2954d5..84220ec 100644
+index a2954d5..3529439 100644
 --- a/packages/mpv.cmake
 +++ b/packages/mpv.cmake
-@@ -38,25 +38,31 @@ ExternalProject_Add(mpv
+@@ -38,25 +38,30 @@ ExternalProject_Add(mpv
          -Ddebug=true
          -Db_ndebug=true
          -Doptimization=3
 +        -Dcplayer=false
 +        -Dsdl2=disabled
-+        -Dwasapi=enabled
 +        -Dd3d11=disabled
 +        -Dgpl=false
-+        -Dgl=disabled
++        -Dwasapi=enabled
          -Db_lto=true
          ${mpv_lto_mode}
          -Dlibmpv=true
@@ -176,7 +193,7 @@ index a2954d5..84220ec 100644
          ${mpv_gl}
          -Dlibcurl=enabled
          -Dc_args='-Wno-error=int-conversion'
-@@ -73,13 +79,6 @@ ExternalProject_Add_Step(mpv strip-binary
+@@ -73,13 +78,6 @@ ExternalProject_Add_Step(mpv strip-binary
  
  ExternalProject_Add_Step(mpv copy-binary
      DEPENDEES strip-binary
@@ -190,7 +207,7 @@ index a2954d5..84220ec 100644
      COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv-2.dll          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv-2.dll
      COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv.dll.a          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv.dll.a
      COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/client.h       ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/client.h
-@@ -99,11 +98,7 @@ mv $2 $2-git-\${GIT}")
+@@ -99,11 +97,7 @@ mv $2 $2-git-\${GIT}")
  ExternalProject_Add_Step(mpv copy-package-dir
      DEPENDEES copy-binary
      COMMAND chmod 755 ${RENAME}
@@ -202,7 +219,7 @@ index a2954d5..84220ec 100644
  
      COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
      COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
-@@ -113,4 +108,4 @@ ExternalProject_Add_Step(mpv copy-package-dir
+@@ -113,4 +107,4 @@ ExternalProject_Add_Step(mpv copy-package-dir
  
  force_rebuild_git(mpv)
  force_meson_configure(mpv)
