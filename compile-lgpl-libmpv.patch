@@ -5,7 +5,7 @@ Subject: [PATCH] packages: compile lgpl libmpv
 
 ---
  cmake/packages_check.cmake |  6 +-----
- packages/ffmpeg.cmake      | 21 ---------------------
+ packages/ffmpeg.cmake      | 22 ----------------------
  packages/libarchive.cmake  |  3 +--
  packages/mpv.cmake         | 30 ++++++++----------------------
  4 files changed, 10 insertions(+), 50 deletions(-)
@@ -73,12 +73,12 @@ index b9ab7a3..c7a96f2 100644
          libva
          openal-soft
      GIT_REPOSITORY https://github.com/FFmpeg/FFmpeg.git
-@@ -57,14 +47,10 @@ ExternalProject_Add(ffmpeg
+@@ -57,14 +47,9 @@ ExternalProject_Add(ffmpeg
          --pkg-config-flags=--static
          --enable-cross-compile
          --enable-runtime-cpudetect
 -        --enable-gpl
-         --enable-version3
+-        --enable-version3
 -        --enable-avisynth
          --enable-vapoursynth
          --enable-libass
@@ -88,7 +88,7 @@ index b9ab7a3..c7a96f2 100644
          --enable-libfreetype
          --enable-libfribidi
          --enable-libfontconfig
-@@ -78,26 +64,19 @@ ExternalProject_Add(ffmpeg
+@@ -78,26 +63,19 @@ ExternalProject_Add(ffmpeg
          --enable-libspeex
          --enable-libvorbis
          --enable-libbs2b
