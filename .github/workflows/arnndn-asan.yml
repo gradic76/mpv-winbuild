@@ -1,0 +1,90 @@
+name: arnndn ASan
+
+# Hunts the out-of-bounds access in libavfilter/af_arnndn.c.
+#
+# Why Linux and not the Windows build we ship: the fault is in C, not in the
+# toolchain — the official BtbN build (gcc, no LTO) crashes too, so it is not
+# ours. AddressSanitizer reports a bad read the moment it happens, whether or
+# not it would have crashed, which means this does not need the material that
+# crashes and does not need any of Gordan's recordings.
+#
+# The build is cut to almost nothing so it finishes in minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_ref:
+        description: 'FFmpeg ref to test (branch, tag or sha)'
+        required: false
+        default: 'master'
+
+jobs:
+  asan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm clang git
+
+      - name: Clone FFmpeg
+        run: |
+          git clone --depth 1 --branch "${{ github.event.inputs.ffmpeg_ref || 'master' }}" \
+            https://github.com/FFmpeg/FFmpeg.git ffmpeg || \
+          (git clone https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
+           cd ffmpeg && git checkout "${{ github.event.inputs.ffmpeg_ref }}")
+          cd ffmpeg && git log -1 --format='%H %ad %s'
+
+      - name: Configure with AddressSanitizer
+        working-directory: ffmpeg
+        run: |
+          ./configure \
+            --toolchain=clang-asan \
+            --disable-everything --disable-doc --disable-programs \
+            --enable-ffmpeg \
+            --enable-filter=arnndn,aresample,aformat,anoisesrc,sine,volume,atrim,apad \
+            --enable-decoder=pcm_s16le,pcm_f32le \
+            --enable-encoder=pcm_s16le \
+            --enable-demuxer=wav --enable-muxer=wav,null \
+            --enable-protocol=file --enable-filter=aevalsrc \
+            --disable-optimizations --disable-stripping
+          tail -5 ffbuild/config.log || true
+
+      - name: Build
+        working-directory: ffmpeg
+        run: make -j$(nproc) ffmpeg
+
+      - name: Model
+        run: |
+          curl -sL -o sh.rnnn \
+            https://raw.githubusercontent.com/GregorR/rnnoise-models/master/somnolent-hogwash-2018-09-01/sh.rnnn
+          ls -l sh.rnnn
+
+      - name: Make test material
+        working-directory: ffmpeg
+        run: |
+          # Speech-like rather than steady noise: arnndn returns early on silence
+          # (E < 0.04), and a flat tone never exercises the pitch path. This is
+          # a warbling tone plus noise, loud enough to be treated as signal.
+          ./ffmpeg -hide_banner -y -f lavfi \
+            -i "aevalsrc=0.4*sin(2*PI*(200+80*sin(2*PI*t*3))*t)+0.15*random(0):d=12:s=48000" \
+            -c:a pcm_s16le -ac 1 speech.wav
+          ls -l speech.wav
+
+      - name: Run under ASan
+        working-directory: ffmpeg
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=0:print_stacktrace=1:log_path=stderr
+        run: |
+          set +e
+          for i in 1 2 3 4 5; do
+            echo "=== pass $i ==="
+            ./ffmpeg -hide_banner -nostdin -y -i speech.wav \
+              -af "arnndn=m=../sh.rnnn:mix=0.8" -c:a pcm_s16le -f null - 2>&1 | tail -60
+          done
+          echo "=== 48 kHz resampled path, as Bell runs it ==="
+          ./ffmpeg -hide_banner -nostdin -y -i speech.wav \
+            -af "aresample=48000,apad=pad_len=4800,arnndn=m=../sh.rnnn:mix=0.8" \
+            -c:a pcm_s16le -ar 22050 -ac 1 -f null - 2>&1 | tail -60
+          exit 0
