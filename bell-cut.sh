@@ -67,6 +67,8 @@ if [ -n "$A" ] && [ -n "$B" ]; then
     printf '        ffmpeg\n        libass\n        libplacebo\n        fribidi\n        libiconv\n        libpng\n        harfbuzz\n        freetype2\n        fontconfig\n'
     sed -n "${B},\$p" "$MPV"; } > /tmp/x && mv /tmp/x "$MPV"
   echo "  mpv DEPENDS -> ffmpeg libass libplacebo + njihove"
+else
+  echo "  UPOZORENJE: mpv DEPENDS nije nadjen"
 fi
 
 # ── mpv: options ────────────────────────────────────────────────────────────
@@ -79,8 +81,21 @@ if [ -n "$A" ]; then
   { sed -n "1,${A}p" "$MPV"; sed 's/^/        /' ../bell-mpv-options.txt; sed -n "$((A+1)),\$p" "$MPV"; } > /tmp/x && mv /tmp/x "$MPV"
   echo "  mpv opcije -> audio-only ($(wc -l < ../bell-mpv-options.txt) komada)"
 fi
-sed -i 's/^set(mpv_gl .*/set(mpv_gl "-Dgl=disabled -Degl-angle=disabled")/' "$MPV"
 sed -i '/^        curl$/d' "$MPV"
+
+# --- mpv: OpenGL, koji se postavlja posve drugdje ---
+# mpv.cmake samo razvija ${mpv_gl}; vrijednost se postavlja po arhitekturi u
+# cmake/packages_check.cmake, i za x86_64 glasi "-Dgl=enabled -Degl-angle=enabled".
+# Izmjereno 2026-09-07: izbaciti angle-headers iz mpv DEPENDS dok to stoji
+# ukljuceno je tocno nacin na koji build umre s
+# "Feature egl-angle cannot be enabled: egl-angle could not be found".
+CHK=cmake/packages_check.cmake
+if [ -f "$CHK" ]; then
+  sed -i 's/^\( *\)set(mpv_gl .*/\1set(mpv_gl "-Dgl=disabled -Degl-angle=disabled")/' "$CHK"
+  echo "  mpv_gl -> gl i egl-angle ugaseni ($(grep -c 'Dgl=disabled' "$CHK") mjesta)"
+else
+  echo "  UPOZORENJE: nema $CHK, mpv_gl nije diran"
+fi
 
 echo ""
 echo "=== provjera ==="
@@ -89,4 +104,6 @@ grep -q -- "--enable-libmp3lame" "$FF" && echo "  OK libmp3lame" || echo "  PALO
 grep -q "ffmpeg-0001-arnndn" packages/ffmpeg-0001-arnndn-short-frame.patch 2>/dev/null || \
   ([ -f packages/ffmpeg-0001-arnndn-short-frame.patch ] && echo "  OK arnndn zakrpa na mjestu" || echo "  PALO: nema arnndn zakrpe")
 grep -c -- "-Dlibcurl=enabled" "$MPV" | grep -q "^0$" && echo "  OK libcurl ugasen" || echo "  PALO: libcurl jos ukljucen"
+grep -rq -- "-Degl-angle=enabled" cmake packages 2>/dev/null && echo "  PALO: egl-angle je jos ukljucen" || echo "  OK egl-angle ugasen"
 echo "  preostalih enable-lib u ffmpegu: $(grep -c -- "--enable-lib" "$FF")"
+echo "  preostalih =enabled u mpv opcijama: $(grep -c -- "=enabled" "$MPV")"
