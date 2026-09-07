@@ -1,0 +1,279 @@
+From dd1dac94d2b24502ad13b057ec12bd084165fa22 Mon Sep 17 00:00:00 2001
+From: gradic76 <gordan.radic@gmail.com>
+Date: Mon, 7 Sep 2026 16:15:44 +0200
+Subject: [PATCH] The Bell: audio-only PCM+MP3 cut, and the arnndn short-frame
+ fix
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bell reads and writes WAV and MP3 and nothing else, so the cut is narrower than
+NBR's, which must be able to open any audiobook.
+
+ffmpeg: --disable-everything, then only the PCM and MP3 decoders and encoders,
+the wav/w64/mp3/null muxers and the audio filter list. libmp3lame is the one
+external library kept: the encoder alone cannot write a file without the muxer,
+so both are named. Dropped gpl/version3 (no x264/x265 left to need them),
+avisynth, vapoursynth, nvenc/nvdec/cuda/amf, openal, opengl, vaapi.
+
+mpv: the audio-only option set, every name checked against mpv's own
+meson.options before it was written — 43 video options left on 'auto' once
+produced a video-capable 'audio-only' build.
+
+Also carries ffmpeg-0001-arnndn-short-frame.patch and the PATCH_COMMAND that
+applies it. arnndn reads a whole FRAME_SIZE from the last, short frame of a
+stream; measured with AddressSanitizer, 30 of 30 runs report the overflow
+before the fix and 0 of 30 after, with the output samples unchanged.
+---
+ packages/ffmpeg-0001-arnndn-short-frame.patch | 65 +++++++++++++++
+ packages/ffmpeg.cmake                         | 58 +++----------
+ packages/mpv.cmake                            | 81 +++++++++++++++----
+ 3 files changed, 139 insertions(+), 65 deletions(-)
+ create mode 100644 packages/ffmpeg-0001-arnndn-short-frame.patch
+
+diff --git a/packages/ffmpeg-0001-arnndn-short-frame.patch b/packages/ffmpeg-0001-arnndn-short-frame.patch
+new file mode 100644
+index 0000000..a53b411
+--- /dev/null
++++ b/packages/ffmpeg-0001-arnndn-short-frame.patch
+@@ -0,0 +1,65 @@
++From e7a11d6e5a6dd20ff519254c767fb282e73fe5b8 Mon Sep 17 00:00:00 2001
++From: gradic76 <gordan.radic@gmail.com>
++Date: Mon, 7 Sep 2026 16:13:52 +0200
++Subject: [PATCH] avfilter/af_arnndn: pad the final short frame instead of
++ reading past it
++
++At end of stream ff_inlink_consume_samples() hands out whatever is left, which
++is normally fewer than FRAME_SIZE samples. rnnoise_channel() then reads
++FRAME_SIZE regardless, starting in biquad(), so everything past the real sample
++count is read out of bounds.
++
++AddressSanitizer, on a 391765-sample file (not a multiple of FRAME_SIZE):
++  heap-buffer-overflow, READ of size 4, 0 bytes after a 416-byte region
++  #0 biquad af_arnndn.c:397  #1 rnnoise_channel af_arnndn.c:1379
++
++Measured: 30 of 30 runs report it before the patch, 0 of 30 after, with the
++output samples unchanged. A file whose length is a multiple of FRAME_SIZE never
++shows it, which is why round-duration test signals do not reproduce it.
++---
++ libavfilter/af_arnndn.c | 29 +++++++++++++++++++++++++++++
++ 1 file changed, 29 insertions(+)
++
++diff --git a/libavfilter/af_arnndn.c b/libavfilter/af_arnndn.c
++index 6209f1b..1d7d74c 100644
++--- a/libavfilter/af_arnndn.c
+++++ b/libavfilter/af_arnndn.c
++@@ -1433,6 +1433,35 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
++     AVFrame *out = NULL;
++     ThreadData td;
++ 
+++    /* The last frame of a stream is whatever is left over, and is normally
+++     * shorter than FRAME_SIZE. Every stage below reads exactly FRAME_SIZE
+++     * samples, so a short frame is read past its end (reported by ASan in
+++     * biquad(), the first thing rnnoise_channel() calls). Pad it. */
+++    if (in->nb_samples < FRAME_SIZE) {
+++        AVFrame *padded = ff_get_audio_buffer(inlink, FRAME_SIZE);
+++        int ret;
+++
+++        if (!padded) {
+++            av_frame_free(&in);
+++            return AVERROR(ENOMEM);
+++        }
+++
+++        ret = av_samples_set_silence(padded->extended_data, 0, FRAME_SIZE,
+++                                     padded->ch_layout.nb_channels, padded->format);
+++        if (ret >= 0)
+++            ret = av_samples_copy(padded->extended_data, in->extended_data, 0, 0,
+++                                  in->nb_samples, padded->ch_layout.nb_channels,
+++                                  padded->format);
+++        if (ret < 0) {
+++            av_frame_free(&padded);
+++            av_frame_free(&in);
+++            return ret;
+++        }
+++        av_frame_copy_props(padded, in);
+++        av_frame_free(&in);
+++        in = padded;
+++    }
+++
++     out = ff_get_audio_buffer(outlink, FRAME_SIZE);
++     if (!out) {
++         av_frame_free(&in);
++-- 
++2.55.0.windows.2
++
+diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
+index b9ab7a3..93f8710 100644
+--- a/packages/ffmpeg.cmake
++++ b/packages/ffmpeg.cmake
+@@ -48,6 +48,7 @@ ExternalProject_Add(ffmpeg
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--sparse --filter=tree:0"
+     GIT_CLONE_POST_COMMAND "sparse-checkout set --no-cone /* !tests/ref/fate"
++    PATCH_COMMAND ${EXEC} git am --3way ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-*.patch
+     UPDATE_COMMAND ""
+     CONFIGURE_COMMAND ${EXEC} CONF=1 <SOURCE_DIR>/configure
+         --cross-prefix=${TARGET_ARCH}-
+@@ -57,59 +58,18 @@ ExternalProject_Add(ffmpeg
+         --pkg-config-flags=--static
+         --enable-cross-compile
+         --enable-runtime-cpudetect
+-        --enable-gpl
+-        --enable-version3
+-        --enable-avisynth
+-        --enable-vapoursynth
+-        --enable-libass
+-        --enable-libbluray
+-        --enable-libdvdnav
+-        --enable-libdvdread
+-        --enable-libfreetype
+-        --enable-libfribidi
+-        --enable-libfontconfig
+-        --enable-libharfbuzz
+-        --enable-libmodplug
+-        --enable-libopenmpt
++        --disable-everything
+         --enable-libmp3lame
+-        --enable-lcms2
+-        --enable-libopus
+-        --enable-libsoxr
+-        --enable-libspeex
+-        --enable-libvorbis
+-        --enable-libbs2b
+-        --enable-librubberband
+-        --enable-libvpx
+-        --enable-libwebp
+-        --enable-libx264
+-        --enable-libx265
+-        --enable-libaom
+-        --enable-libsvtav1
+-        --enable-libdav1d
+-        ${ffmpeg_davs2_cmd}
+-        ${ffmpeg_uavs3d_cmd}
+-        --enable-libzimg
+-        --enable-openssl
+-        --enable-libxml2
+-        --enable-libmysofa
+-        --enable-libssh
+-        --enable-libsrt
+-        --enable-libvpl
+-        --enable-libjxl
+-        --enable-libplacebo
+-        --enable-libzvbi
+-        --enable-libaribcaption
+-        --enable-cuda-llvm
+-        --enable-cuvid
+-        --enable-nvdec
+-        --enable-nvenc
+-        --enable-amf
+-        --enable-openal
+-        --enable-opengl
++        --enable-decoder=mp3,mp3adu,mp3adufloat,mp3float,mp3on4,mp3on4float,pcm_alaw,pcm_bluray,pcm_dvd,pcm_dvda,pcm_f16le,pcm_f24le,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_lxf,pcm_mulaw,pcm_s16be,pcm_s16be_planar,pcm_s16le,pcm_s16le_planar,pcm_s24be,pcm_s24daud,pcm_s24le,pcm_s24le_planar,pcm_s32be,pcm_s32le,pcm_s32le_planar,pcm_s64be,pcm_s64le,pcm_s8,pcm_s8_planar,pcm_sga,pcm_u16be,pcm_u16le,pcm_u24be,pcm_u24le,pcm_u32be,pcm_u32le,pcm_u8,pcm_vidc
++        --enable-encoder=libmp3lame,pcm_alaw,pcm_bluray,pcm_dvd,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_mulaw,pcm_s16be,pcm_s16be_planar,pcm_s16le,pcm_s16le_planar,pcm_s24be,pcm_s24daud,pcm_s24le,pcm_s24le_planar,pcm_s32be,pcm_s32le,pcm_s32le_planar,pcm_s64be,pcm_s64le,pcm_s8,pcm_s8_planar,pcm_u16be,pcm_u16le,pcm_u24be,pcm_u24le,pcm_u32be,pcm_u32le,pcm_u8,pcm_vidc
++        --enable-demuxer=wav,w64,mp3
++        --enable-muxer=wav,w64,mp3,null
++        --enable-parser=mpegaudio
++        --enable-protocol=file,pipe
++        --enable-filter=aap,abench,abuffer,acompressor,acontrast,acopy,acrossfade,acrossover,acrusher,acue,adeclick,adeclip,adecorrelate,adelay,adenorm,aderivative,adrc,adynamicequalizer,adynamicsmooth,aecho,aemphasis,aeval,aevalsrc,aexciter,afade,afdelaysrc,afftdn,afftfilt,afir,afireqsrc,afirsrc,aformat,afreqshift,afwtdn,agate,aiir,aintegral,ainterleave,alatency,alimiter,allpass,aloop,amerge,ametadata,amix,amultiply,anequalizer,anlmdn,anlmf,anlms,anoisesrc,anull,anullsink,anullsrc,apad,aperms,aphaser,aphaseshift,apsnr,apsyclip,apulsator,arealtime,aresample,areverse,arls,arnndn,asdr,asegment,aselect,asendcmd,asetnsamples,asetpts,asetrate,asettb,ashowinfo,asidedata,asisdr,asoftclip,aspectralstats,asplit,asr,astats,astreamselect,asubboost,asubcut,asupercut,asuperpass,asuperstop,atempo,atilt,atrim,axcorrelate,azmq,bandpass,bandreject,bass,biquad,bs2b,channelmap,channelsplit,chorus,compand,compensationdelay,crossfeed,crystalizer,dcshift,deesser,dialoguenhance,drmeter,dynaudnorm,earwax,ebur128,equalizer,extrastereo,firequalizer,flanger,flite,haas,hdcd,headphone,highpass,highshelf,hilbert,join,ladspa,loudnorm,lowpass,lowshelf,lv2,mcompand,pan,replaygain,rubberband,sidechaincompress,sidechaingate,silencedetect,silenceremove,sinc,sine,sofalizer,speechnorm,stereotools,stereowiden,superequalizer,surround,tiltshelf,treble,tremolo,vibrato,virtualbass,volume,volumedetect,whisper
+         --disable-doc
+         --disable-ffplay
+         --disable-ffprobe
+-        --enable-vaapi
+         --disable-vdpau
+         --disable-videotoolbox
+         --disable-decoder=libaom_av1
+diff --git a/packages/mpv.cmake b/packages/mpv.cmake
+index a2954d5..a8c4d05 100644
+--- a/packages/mpv.cmake
++++ b/packages/mpv.cmake
+@@ -41,22 +41,71 @@ ExternalProject_Add(mpv
+         -Db_lto=true
+         ${mpv_lto_mode}
+         -Dlibmpv=true
+-        -Dpdf-build=enabled
+-        -Dlua=enabled
+-        -Djavascript=enabled
+-        -Dsdl2-gamepad=enabled
+-        -Dlibarchive=enabled
+-        -Dlibbluray=enabled
+-        -Ddvdnav=enabled
+-        -Duchardet=enabled
+-        -Drubberband=enabled
+-        -Dlcms2=enabled
+-        -Dopenal=enabled
+-        -Dspirv-cross=enabled
+-        -Dvulkan=enabled
+-        -Dvapoursynth=enabled
+-        -Dsubrandr=enabled
+-        -Dsixel=enabled
++        -Damf=disabled
++        -Dandroid-media-ndk=disabled
++        -Dcaca=disabled
++        -Dcocoa=disabled
++        -Dcplayer=false
++        -Dcuda-hwaccel=disabled
++        -Dcuda-interop=disabled
++        -Dd3d-hwaccel=disabled
++        -Dd3d11=disabled
++        -Dd3d9-hwaccel=disabled
++        -Ddirect3d=disabled
++        -Ddmabuf-wayland=disabled
++        -Ddrm=disabled
++        -Ddvdnav=disabled
++        -Degl-android=disabled
++        -Degl-angle-lib=disabled
++        -Degl-angle-win32=disabled
++        -Degl-drm=disabled
++        -Degl-wayland=disabled
++        -Degl-x11=disabled
++        -Degl=disabled
++        -Dgl-cocoa=disabled
++        -Dgl-dxinterop-d3d9=disabled
++        -Dgl-dxinterop=disabled
++        -Dgl-win32=disabled
++        -Dgl-x11=disabled
++        -Dgpl=false
++        -Dios-gl=disabled
++        -Djavascript=disabled
++        -Djpeg=disabled
++        -Dlcms2=disabled
++        -Dlibarchive=disabled
++        -Dlibavdevice=disabled
++        -Dlibbluray=disabled
++        -Dlua=disabled
++        -Dmacos-cocoa-cb=disabled
++        -Dopenal=disabled
++        -Dpdf-build=disabled
++        -Dplain-gl=disabled
++        -Drubberband=disabled
++        -Dsdl2-audio=disabled
++        -Dsdl2-gamepad=disabled
++        -Dsdl2-video=disabled
++        -Dshaderc=disabled
++        -Dsixel=disabled
++        -Dspirv-cross=disabled
++        -Dsubrandr=disabled
++        -Duchardet=disabled
++        -Dvaapi-drm=disabled
++        -Dvaapi-wayland=disabled
++        -Dvaapi-win32=disabled
++        -Dvaapi-x11=disabled
++        -Dvaapi=disabled
++        -Dvapoursynth=disabled
++        -Dvdpau-gl-x11=disabled
++        -Dvdpau=disabled
++        -Dvideotoolbox-gl=disabled
++        -Dvideotoolbox-pl=disabled
++        -Dvulkan=disabled
++        -Dwasapi=enabled
++        -Dwayland=disabled
++        -Dx11-clipboard=disabled
++        -Dx11=disabled
++        -Dxv=disabled
++        -Dzimg=disabled
+         ${mpv_gl}
+         -Dlibcurl=enabled
+         -Dc_args='-Wno-error=int-conversion'
+-- 
+2.55.0.windows.2
+
