@@ -1,34 +1,39 @@
-From dd1dac94d2b24502ad13b057ec12bd084165fa22 Mon Sep 17 00:00:00 2001
+From 66fd5a299505f8b08a646d19976c4383bfef86df Mon Sep 17 00:00:00 2001
 From: gradic76 <gordan.radic@gmail.com>
-Date: Mon, 7 Sep 2026 16:15:44 +0200
+Date: Mon, 7 Sep 2026 18:14:02 +0200
 Subject: [PATCH] The Bell: audio-only PCM+MP3 cut, and the arnndn short-frame
  fix
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Bell reads and writes WAV and MP3 and nothing else, so the cut is narrower than
-NBR's, which must be able to open any audiobook.
+Bell reads and writes WAV and MP3 and nothing else, so this cut is narrower than
+NBR's, which has to open any audiobook.
 
-ffmpeg: --disable-everything, then only the PCM and MP3 decoders and encoders,
-the wav/w64/mp3/null muxers and the audio filter list. libmp3lame is the one
-external library kept: the encoder alone cannot write a file without the muxer,
-so both are named. Dropped gpl/version3 (no x264/x265 left to need them),
-avisynth, vapoursynth, nvenc/nvdec/cuda/amf, openal, opengl, vaapi.
+ffmpeg DEPENDS is cut to bzip2, lame and zlib. The first attempt only changed
+the configure flags and left DEPENDS alone, so cmake still built x264, x265,
+aom, libvpx and libvpl for a ffmpeg that no longer used any of them — an hour
+and a half of build time, and the run died on libvpl, a video library Bell never
+touches.
+
+configure: --disable-everything, then only the PCM and MP3 decoders and
+encoders, the wav/w64/mp3/null muxers and the audio filter list. libmp3lame is
+the one external library kept: the encoder alone cannot write a file without the
+muxer, so both are named.
 
 mpv: the audio-only option set, every name checked against mpv's own
-meson.options before it was written — 43 video options left on 'auto' once
-produced a video-capable 'audio-only' build.
+meson.options first. DEPENDS keeps libass and libplacebo because mpv requires
+both unconditionally (see doc 04), plus what they need.
 
-Also carries ffmpeg-0001-arnndn-short-frame.patch and the PATCH_COMMAND that
-applies it. arnndn reads a whole FRAME_SIZE from the last, short frame of a
-stream; measured with AddressSanitizer, 30 of 30 runs report the overflow
-before the fix and 0 of 30 after, with the output samples unchanged.
+Carries ffmpeg-0001-arnndn-short-frame.patch and the PATCH_COMMAND applying it:
+arnndn reads a whole FRAME_SIZE from the last, short frame of a stream. ASan
+reports the overflow in 30 of 30 runs before and 0 of 30 after, output samples
+unchanged.
 ---
- packages/ffmpeg-0001-arnndn-short-frame.patch | 65 +++++++++++++++
- packages/ffmpeg.cmake                         | 58 +++----------
- packages/mpv.cmake                            | 81 +++++++++++++++----
- 3 files changed, 139 insertions(+), 65 deletions(-)
+ packages/ffmpeg-0001-arnndn-short-frame.patch |  65 +++++++++++
+ packages/ffmpeg.cmake                         | 101 ++---------------
+ packages/mpv.cmake                            | 107 ++++++++++++------
+ 3 files changed, 145 insertions(+), 128 deletions(-)
  create mode 100644 packages/ffmpeg-0001-arnndn-short-frame.patch
 
 diff --git a/packages/ffmpeg-0001-arnndn-short-frame.patch b/packages/ffmpeg-0001-arnndn-short-frame.patch
@@ -103,10 +108,58 @@ index 0000000..a53b411
 +2.55.0.windows.2
 +
 diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
-index b9ab7a3..93f8710 100644
+index b9ab7a3..de1a53d 100644
 --- a/packages/ffmpeg.cmake
 +++ b/packages/ffmpeg.cmake
-@@ -48,6 +48,7 @@ ExternalProject_Add(ffmpeg
+@@ -1,53 +1,13 @@
+ ExternalProject_Add(ffmpeg
+     DEPENDS
+-        amf-headers
+-        avisynth-headers
+-        nvcodec-headers
+         bzip2
+         lame
+-        lcms2
+-        openssl
+-        libssh
+-        libsrt
+-        libass
+-        libbluray
+-        libdvdnav
+-        libdvdread
+-        libmodplug
+-        libpng
+-        libsoxr
+-        libbs2b
+-        libvpx
+-        libwebp
+-        libzimg
+-        libmysofa
+-        fontconfig
+-        harfbuzz
+-        opus
+-        speex
+-        vorbis
+-        x264
+-        ${ffmpeg_x265}
+-        libxml2
+-        libvpl
+-        libopenmpt
+-        libjxl
+-        libplacebo
+-        libzvbi
+-        libaribcaption
+-        aom
+-        svtav1
+-        dav1d
+-        vapoursynth
+-        ${ffmpeg_uavs3d}
+-        ${ffmpeg_davs2}
+-        rubberband
+-        libva
+-        openal-soft
++        zlib
+     GIT_REPOSITORY https://github.com/FFmpeg/FFmpeg.git
      SOURCE_DIR ${SOURCE_LOCATION}
      GIT_CLONE_FLAGS "--sparse --filter=tree:0"
      GIT_CLONE_POST_COMMAND "sparse-checkout set --no-cone /* !tests/ref/fate"
@@ -114,7 +167,7 @@ index b9ab7a3..93f8710 100644
      UPDATE_COMMAND ""
      CONFIGURE_COMMAND ${EXEC} CONF=1 <SOURCE_DIR>/configure
          --cross-prefix=${TARGET_ARCH}-
-@@ -57,59 +58,18 @@ ExternalProject_Add(ffmpeg
+@@ -57,59 +17,18 @@ ExternalProject_Add(ffmpeg
          --pkg-config-flags=--static
          --enable-cross-compile
          --enable-runtime-cpudetect
@@ -183,10 +236,46 @@ index b9ab7a3..93f8710 100644
          --disable-videotoolbox
          --disable-decoder=libaom_av1
 diff --git a/packages/mpv.cmake b/packages/mpv.cmake
-index a2954d5..a8c4d05 100644
+index a2954d5..abd3f7f 100644
 --- a/packages/mpv.cmake
 +++ b/packages/mpv.cmake
-@@ -41,22 +41,71 @@ ExternalProject_Add(mpv
+@@ -1,30 +1,14 @@
+ ExternalProject_Add(mpv
+     DEPENDS
+-        angle-headers
+         ffmpeg
+-        fribidi
+-        lcms2
+-        libarchive
+         libass
+-        libdvdnav
+-        libdvdread
++        libplacebo
++        fribidi
+         libiconv
+-        libjpeg
+         libpng
+-        luajit
+-        rubberband
+-        uchardet
+-        openal-soft
+-        mujs
+-        vulkan
+-        shaderc
+-        libplacebo
+-        spirv-cross
+-        vapoursynth
+-        libsdl2
+-        subrandr
+-        libsixel
+-        curl
++        harfbuzz
++        freetype2
++        fontconfig
+     GIT_REPOSITORY https://github.com/mpv-player/mpv.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--filter=tree:0"
+@@ -41,22 +25,71 @@ ExternalProject_Add(mpv
          -Db_lto=true
          ${mpv_lto_mode}
          -Dlibmpv=true
