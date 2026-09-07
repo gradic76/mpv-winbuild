@@ -64,12 +64,31 @@ jobs:
       - name: Make test material
         working-directory: ffmpeg
         run: |
-          # Speech-like rather than steady noise: arnndn returns early on silence
-          # (E < 0.04), and a flat tone never exercises the pitch path. This is
-          # a warbling tone plus noise, loud enough to be treated as signal.
-          ./ffmpeg -hide_banner -y -f lavfi \
-            -i "aevalsrc=0.4*sin(2*PI*(200+80*sin(2*PI*t*3))*t)+0.15*random(0):d=12:s=48000" \
-            -c:a pcm_s16le -ac 1 speech.wav
+          python3 - <<'PY'
+          import math, random, struct, wave
+          
+          # Speech-like: a warbling tone with pauses and noise. arnndn returns early when
+          # a frame is near silent (E < 0.04) and a steady tone never exercises the pitch
+          # search, so neither would reach the code we are hunting in.
+          SR, DUR = 48000, 12
+          random.seed(7)
+          w = wave.open("speech.wav", "wb")
+          w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+          out = bytearray()
+          for n in range(SR * DUR):
+              t = n / SR
+              # syllable envelope: on for ~0.25 s, brief gaps
+              env = 1.0 if (t % 0.4) < 0.28 else 0.05
+              f0 = 140 + 60 * math.sin(2 * math.pi * 0.7 * t)
+              v = 0.0
+              for h in (1, 2, 3, 4):
+                  v += (0.5 / h) * math.sin(2 * math.pi * f0 * h * t)
+              v = v * env + 0.05 * (random.random() * 2 - 1)
+              s = int(max(-1.0, min(1.0, v * 0.6)) * 32767)
+              out += struct.pack("<h", s)
+          w.writeframes(bytes(out)); w.close()
+          print("speech.wav written")
+          PY
           ls -l speech.wav
 
       - name: Run under ASan
