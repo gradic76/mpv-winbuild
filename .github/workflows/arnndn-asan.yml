@@ -65,45 +65,90 @@ jobs:
         working-directory: ffmpeg
         run: |
           python3 - <<'PY'
-          import math, random, struct, wave
+          import math, random, struct, wave, sys
           
-          # Speech-like: a warbling tone with pauses and noise. arnndn returns early when
-          # a frame is near silent (E < 0.04) and a steady tone never exercises the pitch
-          # search, so neither would reach the code we are hunting in.
-          SR, DUR = 48000, 12
-          random.seed(7)
-          w = wave.open("speech.wav", "wb")
-          w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
-          out = bytearray()
-          for n in range(SR * DUR):
-              t = n / SR
-              # syllable envelope: on for ~0.25 s, brief gaps
-              env = 1.0 if (t % 0.4) < 0.28 else 0.05
-              f0 = 140 + 60 * math.sin(2 * math.pi * 0.7 * t)
-              v = 0.0
-              for h in (1, 2, 3, 4):
-                  v += (0.5 / h) * math.sin(2 * math.pi * f0 * h * t)
-              v = v * env + 0.05 * (random.random() * 2 - 1)
-              s = int(max(-1.0, min(1.0, v * 0.6)) * 32767)
-              out += struct.pack("<h", s)
-          w.writeframes(bytes(out)); w.close()
-          print("speech.wav written")
+          # Six different characters, because one regular signal proved nothing: the first
+          # ASan pass was clean on a tidy warbling tone. Real speech is irregular — pitch
+          # jumps, plosives, silence, breath — and the pitch search reacts to exactly that.
+          SR = 48000
+          random.seed(int(sys.argv[1]) if len(sys.argv) > 1 else 1)
+          
+          def write(name, fn, dur):
+              w = wave.open(name, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+              out = bytearray()
+              for n in range(int(SR * dur)):
+                  v = max(-1.0, min(1.0, fn(n / SR)))
+                  out += struct.pack("<h", int(v * 32767))
+              w.writeframes(bytes(out)); w.close()
+          
+          def voiced(t, f0):
+              return sum((0.5 / h) * math.sin(2 * math.pi * f0 * h * t) for h in (1, 2, 3, 4, 5))
+          
+          # 1. jumping pitch with hard gaps and occasional plosive bursts
+          def a(t):
+              seg = int(t / 0.31)
+              random.seed(seg + 1000)
+              f0 = 90 + random.random() * 180
+              env = 0.0 if (t % 0.31) > 0.24 else 1.0
+              burst = 0.8 if (t % 0.31) < 0.006 else 0.0
+              return (voiced(t, f0) * env * 0.5 + burst * (random.random() * 2 - 1)
+                      + 0.02 * (random.random() * 2 - 1))
+          
+          # 2. very quiet, near the silence threshold arnndn tests against
+          def b(t):
+              return voiced(t, 130) * 0.02 + 0.004 * (random.random() * 2 - 1)
+          
+          # 3. loud, clipping-adjacent
+          def c(t):
+              return voiced(t, 110) * 0.95 + 0.05 * (random.random() * 2 - 1)
+          
+          # 4. noise only, no pitch at all
+          def d(t):
+              return 0.3 * (random.random() * 2 - 1)
+          
+          # 5. rapid alternation between silence and full level, every 20 ms
+          def e(t):
+              return voiced(t, 160) * (1.0 if int(t / 0.02) % 2 else 0.0) * 0.6
+          
+          # 6. sweeping pitch across the whole search range
+          def f(t):
+              return voiced(t, 60 + 700 * (t / 15.0)) * 0.5
+          
+          for name, fn, dur in (("s1.wav", a, 20), ("s2.wav", b, 12), ("s3.wav", c, 12),
+                                ("s4.wav", d, 12), ("s5.wav", e, 12), ("s6.wav", f, 15)):
+              write(name, fn, dur)
+              print("wrote", name)
           PY
-          ls -l speech.wav
+          ls -l s*.wav
 
       - name: Run under ASan
         working-directory: ffmpeg
         env:
-          ASAN_OPTIONS: detect_leaks=0:halt_on_error=0:print_stacktrace=1:log_path=stderr
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=0:print_stacktrace=1
         run: |
           set +e
-          for i in 1 2 3 4 5; do
-            echo "=== pass $i ==="
-            ./ffmpeg -hide_banner -nostdin -y -i speech.wav \
-              -af "arnndn=m=../sh.rnnn:mix=0.8" -c:a pcm_s16le -f null - 2>&1 | tail -60
+          bad=0
+          for f in s1 s2 s3 s4 s5 s6; do
+            for mix in 0.4 0.8 1.0; do
+              echo "=== $f mix=$mix ==="
+              ./ffmpeg -hide_banner -nostdin -y -i $f.wav \
+                -af "arnndn=m=../sh.rnnn:mix=$mix" -c:a pcm_s16le -f null - 2>&1 \
+                | grep -E "AddressSanitizer|SUMMARY|READ of size|WRITE of size|#[0-9]+ 0x" && bad=1
+            done
           done
-          echo "=== 48 kHz resampled path, as Bell runs it ==="
-          ./ffmpeg -hide_banner -nostdin -y -i speech.wav \
-            -af "aresample=48000,apad=pad_len=4800,arnndn=m=../sh.rnnn:mix=0.8" \
-            -c:a pcm_s16le -ar 22050 -ac 1 -f null - 2>&1 | tail -60
+          echo "=== Bell's own path: 22 kHz in, resample, pad, arnndn ==="
+          for f in s1 s3 s5; do
+            ./ffmpeg -hide_banner -nostdin -y -i $f.wav -c:a pcm_s16le -ar 22050 $f-22.wav 2>/dev/null
+            ./ffmpeg -hide_banner -nostdin -y -i $f-22.wav \
+              -af "aresample=48000,apad=pad_len=4800,arnndn=m=../sh.rnnn:mix=0.8" \
+              -c:a pcm_s16le -ar 22050 -ac 1 -f null - 2>&1 \
+              | grep -E "AddressSanitizer|SUMMARY|READ of size|WRITE of size|#[0-9]+ 0x" && bad=1
+          done
+          echo ""
+          if [ $bad -eq 0 ]; then
+            echo "CISTO — ASan nije prijavio nijedan pristup izvan granica."
+            echo "To NE znaci da buga nema: znaci da ga ovaj materijal ne pogadja."
+          else
+            echo "NASAO — vidi izvjestaj gore."
+          fi
           exit 0
