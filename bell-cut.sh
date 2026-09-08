@@ -41,6 +41,11 @@ if [ -n "$A" ] && [ -n "$B" ]; then
     printf '        --disable-everything\n        --enable-libmp3lame\n'
     printf '        --enable-decoder=%s\n        --enable-encoder=%s\n' "$DEC" "$ENC"
     printf '        --enable-demuxer=wav,w64,mp3\n        --enable-muxer=wav,w64,mp3,null\n'
+    # lavfi je ulazni uredjaj, ne filtar. ChainProbe.Validate pusti lanac kroz
+    # 0,05 s tisine iz anullsrc preko "-f lavfi", pa bez njega Bell odbija SVAKI
+    # lanac uz poruku da je neispravan. Nadjeno nakon prvog uspjelog reza:
+    # filtri su na pravoj datoteci radili savrseno, pao je samo ulaz.
+    printf '        --enable-indev=lavfi\n'
     printf '        --enable-parser=mpegaudio\n        --enable-protocol=file,pipe\n'
     printf '        --enable-filter=%s\n' "$FILT"
     sed -n "$((B+1)),\$p" "$FF"; } > /tmp/x && mv /tmp/x "$FF"
