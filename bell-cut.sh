@@ -83,6 +83,24 @@ if [ -n "$A" ]; then
 fi
 sed -i '/^        curl$/d' "$MPV"
 
+# --- mpv: kopiranje binarija bez cplayera ---
+# Bell treba libmpv-2.dll, ne mpv.exe. S -Dcplayer=false mpv.exe, mpv.com i
+# mpv.pdf se ne grade, a copy-binary ih kopira bezuvjetno i lanac stane na
+# prvom -- build 5 je izgradio i ffmpeg i mpv pa pao ovdje, na zadnjem koraku.
+# Mape se stvaraju izrijekom, jer copy-package-dir poslije radi mv nad njima i
+# mv nad mapom koje nema je isti pad, samo korak kasnije.
+sed -i '/mpv-package\/mpv\.exe$/d;  /mpv-package\/mpv\.com$/d;  /doc\/manual\.pdf$/d' "$MPV"
+sed -i 's/^    ${mpv_copy_debug}$//' "$MPV"
+awk '/^ExternalProject_Add_Step\(mpv copy-binary$/{p=1} p&&/^    DEPENDEES strip-binary$/{
+  print
+  print "    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/doc"
+  print "    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv"
+  print "    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/mpv-debug"
+  print "    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv"
+  p=0; next}
+{print}' "$MPV" > /tmp/x && mv /tmp/x "$MPV"
+grep -q "mpv-package/mpv.exe" "$MPV" && echo "  PALO: mpv.exe se jos kopira" || echo "  copy-binary -> bez mpv.exe, mpv.com i mpv.pdf"
+
 # --- mpv: OpenGL, koji se postavlja posve drugdje ---
 # mpv.cmake samo razvija ${mpv_gl}; vrijednost se postavlja po arhitekturi u
 # cmake/packages_check.cmake, i za x86_64 glasi "-Dgl=enabled -Degl-angle=enabled".
