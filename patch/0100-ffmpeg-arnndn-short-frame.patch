@@ -1,0 +1,108 @@
+From 54aa89aee252890f84d4ad350f045ba0f0b8a963 Mon Sep 17 00:00:00 2001
+From: Gordan <gordan.radic@gmail.com>
+Date: Thu, 10 Sep 2026 22:03:49 +0200
+Subject: [PATCH] NBR: carry The Bell's arnndn short-frame fix into ffmpeg
+
+arnndn's filter_frame reads FRAME_SIZE samples from the last frame of a
+stream, which is normally shorter than that. Measured on NBR's own shipped
+libmpv, 40 runs of one 179 967-sample file to its natural end: 3 died.
+The same 40 on The Bell's patched build: none.
+
+The filter itself was already in this cut -- the fix is all the rebuild is
+for.
+
+ffmpeg.cmake had no PATCH_COMMAND at all; the idiom is the one every other
+package here uses, and the glob keeps it open for a second ffmpeg patch
+without touching this line again.
+---
+ packages/ffmpeg-0001-arnndn-short-frame.patch | 65 +++++++++++++++++++
+ packages/ffmpeg.cmake                         |  1 +
+ 2 files changed, 66 insertions(+)
+ create mode 100644 packages/ffmpeg-0001-arnndn-short-frame.patch
+
+diff --git a/packages/ffmpeg-0001-arnndn-short-frame.patch b/packages/ffmpeg-0001-arnndn-short-frame.patch
+new file mode 100644
+index 0000000..a53b411
+--- /dev/null
++++ b/packages/ffmpeg-0001-arnndn-short-frame.patch
+@@ -0,0 +1,65 @@
++From e7a11d6e5a6dd20ff519254c767fb282e73fe5b8 Mon Sep 17 00:00:00 2001
++From: gradic76 <gordan.radic@gmail.com>
++Date: Mon, 7 Sep 2026 16:13:52 +0200
++Subject: [PATCH] avfilter/af_arnndn: pad the final short frame instead of
++ reading past it
++
++At end of stream ff_inlink_consume_samples() hands out whatever is left, which
++is normally fewer than FRAME_SIZE samples. rnnoise_channel() then reads
++FRAME_SIZE regardless, starting in biquad(), so everything past the real sample
++count is read out of bounds.
++
++AddressSanitizer, on a 391765-sample file (not a multiple of FRAME_SIZE):
++  heap-buffer-overflow, READ of size 4, 0 bytes after a 416-byte region
++  #0 biquad af_arnndn.c:397  #1 rnnoise_channel af_arnndn.c:1379
++
++Measured: 30 of 30 runs report it before the patch, 0 of 30 after, with the
++output samples unchanged. A file whose length is a multiple of FRAME_SIZE never
++shows it, which is why round-duration test signals do not reproduce it.
++---
++ libavfilter/af_arnndn.c | 29 +++++++++++++++++++++++++++++
++ 1 file changed, 29 insertions(+)
++
++diff --git a/libavfilter/af_arnndn.c b/libavfilter/af_arnndn.c
++index 6209f1b..1d7d74c 100644
++--- a/libavfilter/af_arnndn.c
+++++ b/libavfilter/af_arnndn.c
++@@ -1433,6 +1433,35 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
++     AVFrame *out = NULL;
++     ThreadData td;
++ 
+++    /* The last frame of a stream is whatever is left over, and is normally
+++     * shorter than FRAME_SIZE. Every stage below reads exactly FRAME_SIZE
+++     * samples, so a short frame is read past its end (reported by ASan in
+++     * biquad(), the first thing rnnoise_channel() calls). Pad it. */
+++    if (in->nb_samples < FRAME_SIZE) {
+++        AVFrame *padded = ff_get_audio_buffer(inlink, FRAME_SIZE);
+++        int ret;
+++
+++        if (!padded) {
+++            av_frame_free(&in);
+++            return AVERROR(ENOMEM);
+++        }
+++
+++        ret = av_samples_set_silence(padded->extended_data, 0, FRAME_SIZE,
+++                                     padded->ch_layout.nb_channels, padded->format);
+++        if (ret >= 0)
+++            ret = av_samples_copy(padded->extended_data, in->extended_data, 0, 0,
+++                                  in->nb_samples, padded->ch_layout.nb_channels,
+++                                  padded->format);
+++        if (ret < 0) {
+++            av_frame_free(&padded);
+++            av_frame_free(&in);
+++            return ret;
+++        }
+++        av_frame_copy_props(padded, in);
+++        av_frame_free(&in);
+++        in = padded;
+++    }
+++
++     out = ff_get_audio_buffer(outlink, FRAME_SIZE);
++     if (!out) {
++         av_frame_free(&in);
++-- 
++2.55.0.windows.2
++
+diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
+index e6d7c3b..811e317 100644
+--- a/packages/ffmpeg.cmake
++++ b/packages/ffmpeg.cmake
+@@ -46,6 +46,7 @@ ExternalProject_Add(ffmpeg
+     GIT_CLONE_FLAGS "--sparse --filter=tree:0"
+     GIT_CLONE_POST_COMMAND "sparse-checkout set --no-cone /* !tests/ref/fate"
+     UPDATE_COMMAND ""
++    PATCH_COMMAND ${EXEC} git am --3way ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-*.patch
+     CONFIGURE_COMMAND ${EXEC} CONF=1 <SOURCE_DIR>/configure
+         --cross-prefix=${TARGET_ARCH}-
+         --prefix=${MINGW_INSTALL_PREFIX}
+-- 
+2.55.0.windows.2
+
