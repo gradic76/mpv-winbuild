@@ -1,0 +1,91 @@
+From e47396f92775b5f6f8ae92a0d0e8fbfe6364269a Mon Sep 17 00:00:00 2001
+From: Gordan <gordan.radic@gmail.com>
+Date: Fri, 11 Sep 2026 04:10:59 +0200
+Subject: [PATCH] NBR: mpv stops depending on what this cut switched off, and
+ drops the curl backend
+
+Run 3 got past libvpl and died on curl, the same way: ninja stops, mpv never
+configures, no artifact, run reports success. curl is there because upstream's
+mpv.cmake lists it and our own options ask for it -- and it cannot build,
+because the three fork patches that maintain its recipe (libpsl, curl, c-ares)
+no longer apply to shinchiro's tree. They fail and the workflow swallows it.
+
+-Dlibcurl is a "libcurl-based stream backend" in mpv's own words. NBR opens
+files on disk, and what network protocols the engine has come from ffmpeg
+through openssl. It was never chosen -- the generator recorded it as it found
+it in August, when the fork's curl patches still applied. It is off now.
+
+And mpv's DEPENDS is trimmed the way ffmpeg's was in 0101. This cut disables
+64 of mpv's 68 options; only debug, libmpv, wasapi and (until now) libcurl are
+on. Everything else in that list was being built so it could be ignored, and
+each one is a chance to lose a whole run to somebody else's stale patch --
+which is now twice.
+
+The nine kept are The Bell's list, which built seven times on this same cmake
+tree with a comparably cut mpv:
+
+    ffmpeg libass libplacebo fribidi libiconv libpng harfbuzz freetype2 fontconfig
+
+libass and libplacebo look odd in an audio-only build and are deliberate:
+mpv's meson wants them present whatever the options say, and the remaining
+seven are theirs.
+
+Checked while here, since a stale option is the other way this build fails
+silently: all 72 -D options we pass exist in mpv's own meson.options, bar the
+five meson built-ins (b_lto, b_ndebug, c_args, debug, optimization).
+---
+ packages/mpv.cmake | 28 ++++++----------------------
+ 1 file changed, 6 insertions(+), 22 deletions(-)
+
+diff --git a/packages/mpv.cmake b/packages/mpv.cmake
+index 8cec17d..b76d041 100644
+--- a/packages/mpv.cmake
++++ b/packages/mpv.cmake
+@@ -1,30 +1,14 @@
+ ExternalProject_Add(mpv
+     DEPENDS
+-        angle-headers
+         ffmpeg
+-        fribidi
+-        lcms2
+-        libarchive
+         libass
+-        libdvdnav
+-        libdvdread
++        libplacebo
++        fribidi
+         libiconv
+-        libjpeg
+         libpng
+-        luajit
+-        rubberband
+-        uchardet
+-        openal-soft
+-        mujs
+-        vulkan
+-        shaderc
+-        libplacebo
+-        spirv-cross
+-        vapoursynth
+-        libsdl2
+-        subrandr
+-        libsixel
+-        curl
++        harfbuzz
++        freetype2
++        fontconfig
+     GIT_REPOSITORY https://github.com/mpv-player/mpv.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--filter=tree:0"
+@@ -121,7 +105,7 @@ ExternalProject_Add(mpv
+         -Dx11-clipboard=disabled
+         -Dxv=disabled
+         -Dzimg=disabled
+-        -Dlibcurl=enabled
++        -Dlibcurl=disabled
+         -Dc_args='-Wno-error=int-conversion'
+     BUILD_COMMAND ${EXEC} LTO_JOB=1 PDB=1 ninja -C <BINARY_DIR>
+     INSTALL_COMMAND ""
+-- 
+2.55.0.windows.2
+
