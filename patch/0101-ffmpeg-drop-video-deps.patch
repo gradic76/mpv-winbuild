@@ -1,0 +1,79 @@
+From 62c12d7406d34fef034c8e59cb3bf079aa2c5c81 Mon Sep 17 00:00:00 2001
+From: Gordan <gordan.radic@gmail.com>
+Date: Fri, 11 Sep 2026 02:30:49 +0200
+Subject: [PATCH] NBR: ffmpeg stops depending on the video libraries it is told
+ not to use
+
+The build had been failing on libvpl for two runs, and failing SILENTLY:
+ninja stops, ffmpeg and mpv never configure, no mpv-dev artifact is produced
+-- and the run still reports success. The only trace is that ffmpeg-prefix's
+stamp folder holds a download log and nothing else, where every package that
+really built holds configure and build logs too.
+
+libvpl is Intel's hardware VIDEO codec runtime. Nothing in this cut asks for
+it: ffmpeg's configure here is --disable-everything plus exactly ten external
+libraries, all audio (libmodplug, libopenmpt, libopus, libsoxr, libspeex,
+libvorbis, libbs2b, openssl, libxml2, libmysofa). It was in DEPENDS only
+because upstream's DEPENDS is written for a video player's ffmpeg.
+
+So fifteen names go, and every one is both (a) absent from this ffmpeg's
+enable list and (b) absent from mpv's own DEPENDS, which is what decides
+whether it still has to be built at all -- the build runs `ninja mpv`, so a
+package no target depends on is never touched:
+
+    libvpx libwebp libzimg x264 x265 libvpl libjxl libzvbi
+    libaribcaption aom svtav1 dav1d uavs3d davs2 libva
+
+Everything else stays, including the ones this ffmpeg does not enable but mpv
+still needs (libass, libplacebo, vapoursynth, rubberband, openal-soft) and
+the cheap ones it auto-detects (bzip2).
+
+The failure mode if this is wrong is a loud one: ffmpeg's configure says
+"ERROR: libX not found" and the build stops. That is the right way round.
+
+The Bell's branch did the same thing on 2026-09-07 and its note says why:
+"the first build spent 90 minutes on video libraries and died on libvpl".
+---
+ packages/ffmpeg.cmake | 15 ---------------
+ 1 file changed, 15 deletions(-)
+
+diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
+index 811e317..cc756f9 100644
+--- a/packages/ffmpeg.cmake
++++ b/packages/ffmpeg.cmake
+@@ -14,32 +14,17 @@ ExternalProject_Add(ffmpeg
+         libpng
+         libsoxr
+         libbs2b
+-        libvpx
+-        libwebp
+-        libzimg
+         libmysofa
+         fontconfig
+         harfbuzz
+         opus
+         speex
+         vorbis
+-        x264
+-        ${ffmpeg_x265}
+         libxml2
+-        libvpl
+         libopenmpt
+-        libjxl
+         libplacebo
+-        libzvbi
+-        libaribcaption
+-        aom
+-        svtav1
+-        dav1d
+         vapoursynth
+-        ${ffmpeg_uavs3d}
+-        ${ffmpeg_davs2}
+         rubberband
+-        libva
+         openal-soft
+     GIT_REPOSITORY https://github.com/FFmpeg/FFmpeg.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+-- 
+2.55.0.windows.2
+
